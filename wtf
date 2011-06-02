@@ -127,7 +127,11 @@ sub r_render {
 	glColor3f(1, 1, 1);
 	#t_wirebox(-0.5, -0.5, -0.5, +0.5, +0.5, +0.5);
 
-	TextRender::render_text(10, 10, [ 1, 1, 1 ], "test", "o Hai", 3, 3);
+	TextRender::render_text(x => 10, y => 10, text => "o Hai", scale => 3);
+
+	if ($cam_moving) {
+		TextRender::render_text(x => 10, y => 40, color => [ 1, 0, 0 ], text => "OW!", scale => 4);
+	}
 }
 
 sub r_update_projection {
@@ -164,7 +168,6 @@ sub m_mouse {
 	my ($x, $y) = @_;
 
 	if ($cam_moving) {
-		print "rel move: $x | $y\n";
 		$x = -65536 + $x if ($x > 2048);
 		$y = -65536 + $y if ($y > 2048);
 
@@ -183,8 +186,6 @@ sub m_mouse {
 		if (abs($cam_pitch) >= $pitch_limit) {
 			$cam_pitch = abs($pitch_limit) * ($cam_pitch >= 0 ? +1 : -1);
 		}
-
-		printf("cam: yaw=%f pitch=%f\n", $cam_yaw, $cam_pitch);
 	}
 }
 
@@ -237,11 +238,9 @@ sub m_loop {
 			} elsif ($type == SDL_MOUSEMOTION()) {
 				m_mouse($event->motion_xrel, $event->motion_yrel);
 			} elsif ($type == SDL_MOUSEBUTTONDOWN()) {
-				print "ow\n";
 				$cam_moving = 1;
 				m_grab();
 			} elsif ($type == SDL_MOUSEBUTTONUP()) {
-				print "yo\n";
 				$cam_moving = 0;
 				m_ungrab();
 			} elsif ($type == SDL_VIDEORESIZE()) {

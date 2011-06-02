@@ -131,9 +131,14 @@ sub _char {
 }
 
 sub render_text {
-	my ($x, $y, $color, $font, $text, $sx, $sy) = @_;
-	$sx //= 1; $sy //= 1;
-	glPixelZoom($sx, $sy);
+	my %args = @_;
+	my ($x, $y) = @args{qw(x y)};
+	$args{scale_x} //= $args{scale} // 1;
+	$args{scale_y} //= $args{scale} // 1;
+	$args{font} //= "test";
+	$args{color} //= [ 1, 1, 1 ];
+
+	glPixelZoom($args{scale_x}, $args{scale_y});
 
 	save_feature(GL_TEXTURE_2D, sub { save_feature(GL_DEPTH_TEST, sub { save_feature(GL_BLEND, sub { save_blendfunc {
 		save_matrices([GL_PROJECTION, GL_MODELVIEW], sub {
@@ -154,25 +159,25 @@ sub render_text {
 			my (undef, undef, $vx, $vy) = glGetIntegerv_p(GL_VIEWPORT);
 
 			# draw the text
-			$y += scalar(@{$fonts{$font}->{" "}}) * $sy;
-			foreach (split(//, $text)) {
+			$y += scalar(@{$fonts{$args{font}}->{" "}}) * $args{scale_y};
+			foreach (split(//, $args{text})) {
 				my $char;
-				if ($fonts{$font}->{$_}) {
+				if ($fonts{$args{font}}->{$_}) {
 					$char = $_;
 				} else {
 					$char = "";
 				}
 
 				# draw shadow first
-				glRasterPos2f(_window_pos($x + $sx, $y + $sy, $vx, $vy));
-				_char($fonts{$font}->{$char}, [0.1, 0.1, 0.1], $font);
+				glRasterPos2f(_window_pos($x + $args{scale_x}, $y + $args{scale_y}, $vx, $vy));
+				_char($fonts{$args{font}}->{$char}, [0.1, 0.1, 0.1], $args{font});
 
 				# then draw the main text
 				glRasterPos2f(_window_pos($x, $y, $vx, $vy));
-				_char($fonts{$font}->{$char}, $color, $font);
+				_char($fonts{$args{font}}->{$char}, $args{color}, $args{font});
 
 				# and move the "cursor"
-				$x += scalar(@{$fonts{$font}->{$char}->[0]}) * $sx;
+				$x += scalar(@{$fonts{$args{font}}->{$char}->[0]}) * $args{scale_x};
 			}
 		})
 	} }) }) });
