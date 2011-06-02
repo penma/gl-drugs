@@ -1,0 +1,270 @@
+#!/usr/bin/env perl
+use strict;
+use warnings;
+
+use OpenGL qw(:all);
+use SDL 2.5 qw(:init);
+
+use SDL::Video;
+use SDL::Surface;
+use SDL::Mouse;
+use SDL::Event;
+use SDL::Events;
+
+use Math::Trig;
+use Time::HiRes qw(sleep time);
+
+use OpenGL::State;
+use TextRender;
+
+my $sdl_window;
+
+my ($cam_yaw, $cam_pitch) = (-2, -2.31);
+my $cam_moving = 0;
+
+sub t_boxoid {
+	my ($t, $x1, $y1, $z1, $x2, $y2, $z2, %c) = @_;
+
+	my %x = (
+		front  => [ $x1, $y1, $z2, $x2, $y1, $z2, $x2, $y1, $z1, $x1, $y1, $z1 ],
+		right  => [ $x2, $y1, $z2, $x2, $y2, $z2, $x2, $y2, $z1, $x2, $y1, $z1 ],
+		left   => [ $x1, $y2, $z2, $x1, $y1, $z2, $x1, $y1, $z1, $x1, $y2, $z1 ],
+		back   => [ $x2, $y2, $z2, $x1, $y2, $z2, $x1, $y2, $z1, $x2, $y2, $z1 ],
+		bottom => [ $x1, $y1, $z1, $x2, $y1, $z1, $x2, $y2, $z1, $x1, $y2, $z1 ],
+		top    => [ $x1, $y2, $z2, $x2, $y2, $z2, $x2, $y1, $z2, $x1, $y1, $z2 ],
+	);
+
+	foreach my $side (keys %x) {
+		glColor3f(@{$c{$side}}) if ($c{$side});
+		glBegin($t);
+		while (@{$x{$side}}) {
+			glVertex3f(splice(@{$x{$side}}, 0, 3));
+		}
+		glEnd();
+	}
+}
+
+sub t_box {
+	t_boxoid(GL_QUADS, @_);
+}
+
+sub t_wirebox {
+	t_boxoid(GL_LINE_LOOP, @_);
+}
+
+sub rs_compile {
+	my ($type, $code) = @_;
+
+	my $id = glCreateShaderObjectARB($type);
+	glShaderSourceARB_p($id, $code);
+	glCompileShaderARB($id);
+
+	if (!glGetObjectParameterivARB_p($id, GL_OBJECT_COMPILE_STATUS_ARB)) {
+		my $stat = glGetInfoLogARB_p($id);
+		print STDERR "Shader compilation failed: $stat\n";
+		print STDERR "Shader source:\n";
+		my $ln = 1;
+		for my $lc (split(/\n/, $code)) {
+			print STDERR sprintf("%3d  %s\n", $ln, $lc);
+			$ln++;
+		}
+		die();
+	}
+
+	return $id;
+}
+
+sub rs_link {
+	my (@ids) = @_;
+
+	my $prog = glCreateProgramObjectARB();
+
+	for my $id (@ids) {
+		glAttachObjectARB($prog, $id);
+	}
+
+	glLinkProgramARB($prog);
+
+	if (!glGetObjectParameterivARB_p($prog, GL_OBJECT_LINK_STATUS_ARB)) {
+		my $stat = glGetInfoLogARB_p($prog);
+		die("Failed to link shader program: $stat - dying");
+	}
+
+	return $prog;
+}
+
+sub r_render {
+	glClearColor(0, 0, 0, 0);
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+	# cam
+	glMatrixMode(GL_MODELVIEW);
+	glLoadIdentity();
+	my $r = 2;
+	my $cx = sin($cam_pitch - 0.5 * pi) * cos($cam_yaw) * $r;
+	my $cy = sin($cam_pitch - 0.5 * pi) * sin($cam_yaw) * $r;
+	my $cz = cos($cam_pitch - 0.5 * pi) * $r;
+	gluLookAt(
+		0 - $cx, 0 - $cy, 0 - $cz,
+		0, 0, 0,
+		0, 0, 1
+	);
+
+	glEnable(GL_DEPTH_TEST);
+
+	# a box!
+	t_box(-0.5, -0.5, -0.5, +0.5, +0.5, +0.5,
+		front => [ 1, 0, 0],
+		left  => [ 1, 1, 0 ],
+		right => [ 1, 0, 1 ],
+		back  => [ 0, 1, 0 ],
+		top   => [ 0, 0, 1 ],
+		bottom=> [ 0, 1, 1 ],
+	);
+	glUseProgramObjectARB(0);
+
+	glDisable(GL_DEPTH_TEST);
+	glColor3f(1, 1, 1);
+	#t_wirebox(-0.5, -0.5, -0.5, +0.5, +0.5, +0.5);
+
+	TextRender::render_text(10, 10, [ 1, 1, 1 ], "test", "o Hai", 3, 3);
+}
+
+sub r_update_projection {
+	my ($width, $height) = @_;
+
+	save_matrixmode {
+		glMatrixMode(GL_PROJECTION);
+		glLoadIdentity();
+		gluPerspective(50, $sdl_window->w / $sdl_window->h, 1, 50);
+	};
+}
+
+sub m_grab {
+	SDL::Video::wm_grab_input(SDL_GRAB_ON());
+	SDL::Mouse::show_cursor(SDL_DISABLE());
+}
+
+sub m_ungrab {
+	SDL::Video::wm_grab_input(SDL_GRAB_OFF());
+	SDL::Mouse::show_cursor(SDL_ENABLE());
+}
+
+sub m_keydown {
+	my ($keysym) = @_;
+
+	if ($keysym == SDLK_ESCAPE()) {
+		my $ev = SDL::Event->new();
+		$ev->type(SDL_QUIT());
+		SDL::Events::push_event($ev);
+	}
+}
+
+sub m_mouse {
+	my ($x, $y) = @_;
+
+	if ($cam_moving) {
+		print "rel move: $x | $y\n";
+		$x = -65536 + $x if ($x > 2048);
+		$y = -65536 + $y if ($y > 2048);
+
+		my ($ms_x, $ms_y) = (-0.005, -0.005);
+		$cam_yaw += $x * $ms_x;
+
+		if ($cam_yaw > pi) {
+			$cam_yaw -= 2 * pi;
+		} elsif ($cam_yaw < - pi) {
+			$cam_yaw += 2 * pi;
+		}
+
+		$cam_pitch += $y * $ms_y;
+
+		my $pitch_limit = int(0.5 * pi / $ms_y) * $ms_y;
+		if (abs($cam_pitch) >= $pitch_limit) {
+			$cam_pitch = abs($pitch_limit) * ($cam_pitch >= 0 ? +1 : -1);
+		}
+
+		printf("cam: yaw=%f pitch=%f\n", $cam_yaw, $cam_pitch);
+	}
+}
+
+sub m_resize {
+	my ($w, $h) = @_;
+
+	$sdl_window = SDL::Video::set_video_mode($w, $h, 0,
+		SDL_OPENGL() |
+		SDL_HWSURFACE() |
+		SDL_RESIZABLE()
+	);
+
+	if (!$sdl_window) {
+		print STDERR "fatal: SDL Error: " .  SDL::get_error() . "\n";
+		exit(1);
+	}
+
+	# find out actual new window size (may differ from requested one)
+	# and reset projection
+	($w, $h) = ($sdl_window->w, $sdl_window->h);
+	glViewport(0, 0, $w, $h);
+
+	r_update_projection($w, $h);
+}
+
+sub m_init {
+	# pointer grabbing is broken otherwise.
+	SDL::putenv("SDL_VIDEO_X11_DGAMOUSE=0");
+
+	# initialize OpenGL
+	SDL::init(SDL_INIT_VIDEO());
+	SDL::Video::wm_set_caption("shader drugs", "");
+	SDL::Video::GL_set_attribute(SDL_GL_DOUBLEBUFFER(), 1);
+	m_resize(800, 450);
+}
+
+sub m_loop {
+	my $last_rot = time();
+
+	my $event = SDL::Event->new();
+	while (1) {
+		SDL::Events::pump_events();
+		while (SDL::Events::poll_event($event)) {
+			my $type = $event->type();
+			if ($type == SDL_QUIT()) {
+				exit(0);
+			} elsif ($type == SDL_KEYDOWN()) {
+				my $keysym = $event->key_sym();
+				m_keydown($keysym);
+			} elsif ($type == SDL_MOUSEMOTION()) {
+				m_mouse($event->motion_xrel, $event->motion_yrel);
+			} elsif ($type == SDL_MOUSEBUTTONDOWN()) {
+				print "ow\n";
+				$cam_moving = 1;
+				m_grab();
+			} elsif ($type == SDL_MOUSEBUTTONUP()) {
+				print "yo\n";
+				$cam_moving = 0;
+				m_ungrab();
+			} elsif ($type == SDL_VIDEORESIZE()) {
+				m_resize($event->resize_w(), $event->resize_h());
+			}
+		}
+
+		if (!$cam_moving) {
+			$cam_yaw += time() - $last_rot;
+
+			if ($cam_yaw > pi) {
+				$cam_yaw -= 2 * pi;
+			} elsif ($cam_yaw < - pi) {
+				$cam_yaw += 2 * pi;
+			}
+		}
+		$last_rot = time();
+
+		r_render();
+		glFlush();
+		SDL::Video::GL_swap_buffers();
+	}
+}
+
+m_init();
+m_loop();
