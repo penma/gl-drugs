@@ -1,0 +1,217 @@
+#!/usr/bin/env perl
+use strict;
+use warnings;
+use 5.010;
+
+use OpenGL qw(:all);
+use SDL 2.5 qw(:init);
+
+use SDL::Video;
+use SDL::Surface;
+use SDL::Event;
+use SDL::Events;
+
+use Time::HiRes qw(sleep time);
+
+use OpenGL::State;
+use TextRender;
+
+my $sdl_window;
+
+my $cur_n = 0;
+
+sub rs_compile {
+	my ($type, $code) = @_;
+
+	my $id = glCreateShaderObjectARB($type);
+	glShaderSourceARB_p($id, $code);
+	glCompileShaderARB($id);
+
+	if (!glGetObjectParameterivARB_p($id, GL_OBJECT_COMPILE_STATUS_ARB)) {
+		my $stat = glGetInfoLogARB_p($id);
+		print STDERR "Shader compilation failed: $stat\n";
+		print STDERR "Shader source:\n";
+		my $ln = 1;
+		for my $lc (split(/\n/, $code)) {
+			print STDERR sprintf("%3d  %s\n", $ln, $lc);
+			$ln++;
+		}
+		die();
+	}
+
+	return $id;
+}
+
+sub rs_link {
+	my (@ids) = @_;
+
+	my $prog = glCreateProgramObjectARB();
+
+	for my $id (@ids) {
+		glAttachObjectARB($prog, $id);
+	}
+
+	glLinkProgramARB($prog);
+
+	if (!glGetObjectParameterivARB_p($prog, GL_OBJECT_LINK_STATUS_ARB)) {
+		my $stat = glGetInfoLogARB_p($prog);
+		die("Failed to link shader program: $stat - dying");
+	}
+
+	return $prog;
+}
+
+my $shader;
+
+sub r_init_shader {
+	$shader = rs_link(rs_compile(GL_FRAGMENT_SHADER_ARB, << "_"));
+uniform int n;
+
+int xor_func(float a, float b) {
+	int m = 0;
+	for (int bit = 0; bit <= 7; bit++) {
+		int b_a = int(mod((a / pow(2, bit)), 2));
+		int b_b = int(mod((b / pow(2, bit)), 2));
+		m = m + (b_a == b_b ? 0 : int(pow(2, bit)));
+	}
+	return m;
+}
+
+vec3 hsv_rgb(float h, float s, float v) {
+	float d_i = floor(6.0 * h);
+	float d_1 = v * (1.0 - s);
+	float d_2 = v * (1.0 - (s * (6.0 * h - d_i)));
+	float d_3 = v * (1.0 - (s * (1.0 - (6.0 * h - d_i))));
+
+	int i = int(d_i);
+	if (i < 3) {
+		if (i == 0) { return vec3(v, d_3, d_1); }
+		if (i == 1) { return vec3(d_2, v, d_1); }
+		if (i == 2) { return vec3(d_1, v, d_3); }
+	} else {
+		if (i == 3) { return vec3(d_1, d_2, v); }
+		if (i == 4) { return vec3(d_3, d_1, v); }
+		if (i == 5) { return vec3(v, d_1, d_2); }
+	}
+}
+
+void main() {
+	int xor_a_b = xor_func(gl_FragCoord.x, gl_FragCoord.y);
+
+	vec3 v = vec3(0.0);
+	for (int l = 0; l < 4; l++) {
+		v += hsv_rgb(float(mod(-64 + n + l * 64, 256)) / 256.0, 1.0, xor_a_b < int(pow(2, l)) * n ? 0.25 : 0.0);
+	}
+	gl_FragColor = vec4(v, 1.0);
+}
+_
+}
+
+sub r_render {
+	glClearColor(0, 0, 0, 0);
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+	# the box!
+	my (undef, undef, $vx, $vy) = glGetIntegerv_p(GL_VIEWPORT);
+	glUseProgramObjectARB($shader);
+	glUniform1iARB(glGetUniformLocationARB_p($shader, "n"), $cur_n);
+	glColor3f(1, 1, 1);
+	glBegin(GL_QUADS);
+		glVertex2f(  0,   0);
+		glVertex2f($vx,   0);
+		glVertex2f($vx, $vy);
+		glVertex2f(  0, $vy);
+	glEnd();
+	glUseProgramObjectARB(0);
+
+	state $last_time = time();
+	if (time() - $last_time >= 0.0625) {
+		$cur_n++;
+		if ($cur_n >= 256) {
+			$cur_n = 0;
+		}
+		$last_time = time();
+	}
+}
+
+sub r_update_projection {
+	my ($width, $height) = @_;
+
+	save_matrixmode {
+		glMatrixMode(GL_PROJECTION);
+		glLoadIdentity();
+		my (undef, undef, $win_x, $win_y) = glGetIntegerv_p(GL_VIEWPORT);
+		glOrtho(0, $win_x, $win_y, 0, 1, -1);
+		glMatrixMode(GL_MODELVIEW);
+		glLoadIdentity();
+	};
+}
+
+sub m_keydown {
+	my ($keysym) = @_;
+
+	if ($keysym == SDLK_ESCAPE() or $keysym == SDLK_q()) {
+		my $ev = SDL::Event->new();
+		$ev->type(SDL_QUIT());
+		SDL::Events::push_event($ev);
+	} elsif ($keysym == SDLK_r()) {
+		$cur_n = 0;
+	}
+}
+
+sub m_resize {
+	my ($w, $h) = @_;
+
+	$sdl_window = SDL::Video::set_video_mode($w, $h, 0,
+		SDL_OPENGL() |
+		SDL_HWSURFACE() |
+		SDL_RESIZABLE()
+	);
+
+	if (!$sdl_window) {
+		print STDERR "fatal: SDL Error: " .  SDL::get_error() . "\n";
+		exit(1);
+	}
+
+	# find out actual new window size (may differ from requested one)
+	# and reset projection
+	($w, $h) = ($sdl_window->w, $sdl_window->h);
+	glViewport(0, 0, $w, $h);
+
+	r_update_projection($w, $h);
+}
+
+sub m_init {
+	# initialize OpenGL
+	SDL::init(SDL_INIT_VIDEO());
+	SDL::Video::wm_set_caption("shader drugs", "");
+	SDL::Video::GL_set_attribute(SDL_GL_DOUBLEBUFFER(), 1);
+	m_resize(800, 450);
+
+	r_init_shader();
+}
+
+sub m_loop {
+	my $event = SDL::Event->new();
+	while (1) {
+		SDL::Events::pump_events();
+		while (SDL::Events::poll_event($event)) {
+			my $type = $event->type();
+			if ($type == SDL_QUIT()) {
+				exit(0);
+			} elsif ($type == SDL_KEYDOWN()) {
+				my $keysym = $event->key_sym();
+				m_keydown($keysym);
+			} elsif ($type == SDL_VIDEORESIZE()) {
+				m_resize($event->resize_w(), $event->resize_h());
+			}
+		}
+
+		r_render();
+		glFlush();
+		SDL::Video::GL_swap_buffers();
+	}
+}
+
+m_init();
+m_loop();
