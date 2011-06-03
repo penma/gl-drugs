@@ -130,7 +130,7 @@ sub r_render {
 	TextRender::render_text(x => 10, y => 10, text => "o Hai", scale => 3);
 
 	if ($cam_moving) {
-		TextRender::render_text(x => 10, y => 40, color => [ 1, 0, 0 ], text => "OW!", scale => 4);
+		TextRender::render_text(x => 10, y => 40, color => [ 1, 0, 0 ], text => "OW!", scale => 2, font => "ter16b");
 	}
 }
 
