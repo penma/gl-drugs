@@ -65,11 +65,13 @@ my $shader;
 
 sub r_init_shader {
 	$shader = rs_link(rs_compile(GL_FRAGMENT_SHADER_ARB, << "_"));
+#version 120
+
 uniform int n;
 
 int xor_func(float a, float b) {
 	int m = 0;
-	for (int bit = 0; bit <= 7; bit++) {
+	for (int bit = 0; bit <= 11; bit++) {
 		int b_a = int(mod((a / pow(2, bit)), 2));
 		int b_b = int(mod((b / pow(2, bit)), 2));
 		m = m + (b_a == b_b ? 0 : int(pow(2, bit)));
@@ -77,30 +79,14 @@ int xor_func(float a, float b) {
 	return m;
 }
 
-vec3 hsv_rgb(float h, float s, float v) {
-	float d_i = floor(6.0 * h);
-	float d_1 = v * (1.0 - s);
-	float d_2 = v * (1.0 - (s * (6.0 * h - d_i)));
-	float d_3 = v * (1.0 - (s * (1.0 - (6.0 * h - d_i))));
-
-	int i = int(d_i);
-	if (i < 3) {
-		if (i == 0) { return vec3(v, d_3, d_1); }
-		if (i == 1) { return vec3(d_2, v, d_1); }
-		if (i == 2) { return vec3(d_1, v, d_3); }
-	} else {
-		if (i == 3) { return vec3(d_1, d_2, v); }
-		if (i == 4) { return vec3(d_3, d_1, v); }
-		if (i == 5) { return vec3(v, d_1, d_2); }
-	}
-}
-
 void main() {
 	int xor_a_b = xor_func(gl_FragCoord.x, gl_FragCoord.y);
 
 	vec3 v = vec3(0.0);
-	for (int l = 0; l < 4; l++) {
-		v += hsv_rgb(float(mod(-64 + n + l * 64, 256)) / 256.0, 1.0, xor_a_b < int(pow(2, l)) * n ? 0.25 : 0.0);
+	float rv;
+	for (int l = 0; l < 8; l++) {
+		rv = xor_a_b < int(pow(2, l)) * n ? pow(2, -1 - l) : 0.0;
+		v += vec3(rv);
 	}
 	gl_FragColor = vec4(v, 1.0);
 }
